@@ -1,12 +1,26 @@
 import io
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
-import requests
 import streamlit as st
 
 # 페이지 기본 설정
 st.set_page_config(
     page_title="초등 장보기 미션 앱", page_icon="🛒", layout="wide"
+)
+
+# Custom CSS로 상품 이미지 크기 50% 축소
+st.markdown(
+    """
+    <style>
+    /* 상품 이미지 너비를 50%로 줄이고 중앙 정렬 */
+    [data-testid="stImage"] img {
+        width: 50% !important;
+        margin: 0 auto;
+        display: block;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 # -------------------------------------------------------------------
@@ -22,6 +36,8 @@ if "cart" not in st.session_state:
     st.session_state.cart = {}  # {상품명: {"price": 가격, "qty": 수량, "img": url}}
 if "submitted" not in st.session_state:
     st.session_state.submitted = False
+if "item_reasons" not in st.session_state:
+    st.session_state.item_reasons = {}  # {상품명: "구매 이유"}
 
 
 # -------------------------------------------------------------------
@@ -33,7 +49,7 @@ def load_products():
         df = pd.read_csv("products.csv")
         return df
     except Exception:
-        # csv 파일이 없을 경우 대비한 샘플 데이터
+        # csv 파일이 없을 경우 대비한 샘플 데이터 (오류가 난 이미지 URL 수정 반영)
         data = {
             "품명": [
                 "카레용 돼지고기(300g)",
@@ -62,10 +78,10 @@ def load_products():
             "이미지URL": [
                 "https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?w=300",
                 "https://images.unsplash.com/photo-1518977676601-b53f82aba655?w=300",
-                "https://images.unsplash.com/photo-1447175008436-08417090ea9b?w=300",
+                "https://images.unsplash.com/photo-1598170845058-12ef4a69705d?w=300",  # 수정된 당근 이미지
                 "https://images.unsplash.com/photo-1508747703725-719777637510?w=300",
                 "https://images.unsplash.com/photo-1588166524941-3bf61a9c41db?w=300",
-                "https://images.unsplash.com/photo-1535141192574-5d4897c13136?w=300",
+                "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=300",  # 수정된 케이크 이미지
                 "https://images.unsplash.com/photo-1530103862676-de8c9debad1d?w=300",
                 "https://images.unsplash.com/photo-1621939514649-280e2ee25f60?w=300",
                 "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=300",
@@ -78,13 +94,11 @@ def load_products():
 # -------------------------------------------------------------------
 # [결과 이미지 생성 함수]
 # -------------------------------------------------------------------
-def generate_result_image(mission_name, cart, total_spent, budget, reason):
-    # 이미지 바탕 규격 (가로 800px, 세로 1000px)
-    width, height = 800, 1000
+def generate_result_image(mission_name, cart, total_spent, budget, item_reasons):
+    width, height = 800, 1200
     img = Image.new("RGB", (width, height), color=(255, 255, 255))
     draw = ImageDraw.Draw(img)
 
-    # 기본 폰트 로드 (폰트 깨짐 방지를 위해 PIL 기본 폰트 사용)
     font_large = ImageFont.load_default()
     font_medium = ImageFont.load_default()
 
@@ -109,46 +123,42 @@ def generate_result_image(mission_name, cart, total_spent, budget, reason):
     y_pos += 40
     draw.line([(30, y_pos), (width - 30, y_pos)], fill=(200, 200, 200), width=2)
 
-    # 구매 물건 목록
+    # 구매한 물건 및 개별 구매 이유
     y_pos += 20
     draw.text(
-        (30, y_pos), "■ 구매한 물건 목록", fill=(0, 0, 0), font=font_medium
-    )
-    y_pos += 30
-
-    for item, info in cart.items():
-        if info["qty"] > 0:
-            item_text = f"- {item} x {info['qty']}개 : {info['price'] * info['qty']:,}원"
-            draw.text(
-                (50, y_pos), item_text, fill=(50, 50, 50), font=font_medium
-            )
-            y_pos += 25
-
-    y_pos += 20
-    draw.line([(30, y_pos), (width - 30, y_pos)], fill=(200, 200, 200), width=2)
-
-    # 구매 이유
-    y_pos += 20
-    draw.text(
-        (30, y_pos), "■ 내가 이 물건들을 선택한 이유", fill=(0, 0, 0), font=font_medium
+        (30, y_pos), "■ 구매한 물건 목록 및 구매 이유", fill=(0, 0, 0), font=font_medium
     )
     y_pos += 35
 
-    # 텍스트 줄바꿈 처리
-    lines = []
-    words = reason.split(" ")
-    current_line = ""
-    for word in words:
-        if len(current_line + word) > 40:
-            lines.append(current_line)
-            current_line = word + " "
-        else:
-            current_line += word + " "
-    lines.append(current_line)
+    for item, info in cart.items():
+        if info["qty"] > 0:
+            item_header = f"• {item} (수량: {info['qty']}개 / 가격: {info['price'] * info['qty']:,}원)"
+            draw.text((40, y_pos), item_header, fill=(0, 0, 0), font=font_medium)
+            y_pos += 25
 
-    for line in lines:
-        draw.text((50, y_pos), line, fill=(30, 30, 30), font=font_medium)
-        y_pos += 25
+            reason_text = item_reasons.get(item, "").strip()
+            if not reason_text:
+                reason_text = "이유 미작성"
+
+            # 텍스트 줄바꿈 처리
+            words = f"  - 선택 이유: {reason_text}".split(" ")
+            current_line = ""
+            for word in words:
+                if len(current_line + word) > 45:
+                    draw.text(
+                        (50, y_pos), current_line, fill=(80, 80, 80), font=font_medium
+                    )
+                    y_pos += 20
+                    current_line = "    " + word + " "
+                else:
+                    current_line += word + " "
+            if current_line:
+                draw.text(
+                    (50, y_pos), current_line, fill=(80, 80, 80), font=font_medium
+                )
+                y_pos += 25
+
+            y_pos += 10
 
     # 이미지 데이터를 바이너리로 변환
     buffer = io.BytesIO()
@@ -173,6 +183,7 @@ if st.session_state.page == "start":
             st.session_state.selected_mission = "맛있는 카레 만들기"
             st.session_state.budget = 15000
             st.session_state.cart = {}
+            st.session_state.item_reasons = {}
             st.session_state.page = "shop"
             st.rerun()
 
@@ -184,6 +195,7 @@ if st.session_state.page == "start":
             st.session_state.selected_mission = "친구 생일파티 준비하기"
             st.session_state.budget = 40000
             st.session_state.cart = {}
+            st.session_state.item_reasons = {}
             st.session_state.page = "shop"
             st.rerun()
 
@@ -223,6 +235,8 @@ elif st.session_state.page == "shop":
                     st.toast(f"{row['품명']} {qty}개가 장바구니에 담겼습니다!")
                 elif row["품명"] in st.session_state.cart:
                     del st.session_state.cart[row["품명"]]
+                    if row["품명"] in st.session_state.item_reasons:
+                        del st.session_state.item_reasons[row["품명"]]
                     st.toast(f"{row['품명']}이(가) 장바구니에서 삭제되었습니다.")
 
     st.markdown("---")
@@ -272,7 +286,6 @@ elif st.session_state.page == "shop":
 # 3. 결과 화면
 # ===================================================================
 elif st.session_state.page == "result":
-    # 직접 접근 차단 guard
     if not st.session_state.submitted:
         st.session_state.page = "start"
         st.rerun()
@@ -290,30 +303,39 @@ elif st.session_state.page == "result":
         f"총 예산 **{budget:,}원** 중 **{total_spent:,}원**을 사용하여 **{remaining:,}원**이 남았습니다!"
     )
 
-    st.markdown("### 📦 내가 구매한 물건들")
+    st.markdown("### 📦 구매한 물건별 구매 이유 작성")
+    st.caption("각 물건을 선택한 이유를 작성해주세요.")
+
+    # 구매한 각 상품 목록별로 이유 작성 입력창 생성
+    all_reasons_filled = True
     for name, info in st.session_state.cart.items():
         if info["qty"] > 0:
-            st.write(
-                f"- **{name}** | {info['qty']}개 | {info['price'] * info['qty']:,}원"
-            )
+            col_img, col_txt = st.columns([1, 4])
+            with col_img:
+                st.image(info["img"], use_container_width=True)
+            with col_txt:
+                st.markdown(
+                    f"**{name}** ({info['qty']}개 / {info['price'] * info['qty']:,}원)"
+                )
+                reason_val = st.text_input(
+                    f"'{name}'을(를) 선택한 이유:",
+                    value=st.session_state.item_reasons.get(name, ""),
+                    key=f"reason_{name}",
+                    placeholder=f"예: {name}이(가) 미션 완수를 위해 필수적으로 필요해서 구매했습니다.",
+                )
+                st.session_state.item_reasons[name] = reason_val
+                if not reason_val.strip():
+                    all_reasons_filled = False
 
     st.markdown("---")
 
-    # 구매 이유 입력
-    reason = st.text_area(
-        "💡 이 물건들을 선택한 이유를 작성해주세요:",
-        placeholder="예: 예산 범위 안에서 카레 재료를 모두 준비하기 위해 양파와 감자의 수량을 조절했습니다.",
-        height=120,
-    )
-
-    if reason.strip():
-        # 이미지 생성
+    if all_reasons_filled:
         img_bytes = generate_result_image(
             st.session_state.selected_mission,
             st.session_state.cart,
             total_spent,
             budget,
-            reason,
+            st.session_state.item_reasons,
         )
 
         st.download_button(
@@ -324,9 +346,11 @@ elif st.session_state.page == "result":
             type="primary",
         )
     else:
-        st.info("구매한 이유를 입력하면 다운로드 버튼이 활성화됩니다.")
+        st.info("💡 모든 물건의 구매 이유를 작성하시면 결과 카드 다운로드 버튼이 활성화됩니다.")
 
     if st.button("처음으로 돌아가기"):
         st.session_state.page = "start"
         st.session_state.submitted = False
+        st.session_state.cart = {}
+        st.session_state.item_reasons = {}
         st.rerun()
